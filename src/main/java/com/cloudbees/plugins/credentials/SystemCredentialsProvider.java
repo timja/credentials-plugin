@@ -60,6 +60,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
+import jenkins.persistence.RemoteChangeHandler;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
 import org.springframework.security.core.Authentication;
@@ -117,6 +120,43 @@ public class SystemCredentialsProvider extends AbstractDescribableImpl<SystemCre
         }
         domainCredentialsMap = DomainCredentials.migrateListToMap(domainCredentialsMap, credentials);
         credentials = null;
+    }
+
+    /**
+     * Reads {@code credentials.xml} again, replacing the credentials in memory, for example after another controller
+     * sharing this controller's configuration changed them. Nothing is saved.
+     *
+     * @throws IOException if the file could not be read
+     */
+    @Restricted(NoExternalUse.class)
+    public synchronized void reload() throws IOException {
+        XmlFile xml = getConfigFile();
+        if (xml.exists()) {
+            xml.unmarshal(this);
+        } else {
+            domainCredentialsMap = new CopyOnWriteMap.Hash<>();
+        }
+        domainCredentialsMap = DomainCredentials.migrateListToMap(domainCredentialsMap, credentials);
+        credentials = null;
+    }
+
+    /**
+     * Applies changes to system credentials made by another controller sharing a persistence store.
+     */
+    @Restricted(NoExternalUse.class)
+    @Extension
+    public static class RemoteChanges implements RemoteChangeHandler {
+        @Override
+        public boolean handles(@NonNull String key) {
+            return key.equals("credentials.xml");
+        }
+
+        @Override
+        public void changed(@NonNull String key, boolean deleted) throws IOException {
+            try (ACLContext ctx = ACL.as2(ACL.SYSTEM2)) {
+                getInstance().reload();
+            }
+        }
     }
     
     /**
